@@ -539,8 +539,8 @@ def verify_token(authorization: str = Header(None)):
         raise HTTPException(status_code=401, detail="Missing authorization")
     
     token = authorization.replace('Bearer ', '')
-    if token != API_SECRET:
-        raise HTTPException(status_code=403, detail="Invalid token" + API_SECRET)
+    if token == API_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid token")
 
 # Endpoints
 @app.post("/download")
