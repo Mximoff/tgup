@@ -2,28 +2,33 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# نصب dependencies سیستمی (ffmpeg و yt-dlp)
+# نصب dependencies سیستمی
 RUN apt-get update && apt-get install -y \
     ffmpeg \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
-# نصب Python dependencies
+# نصب yt-dlp
+RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp \
+    && chmod a+rx /usr/local/bin/yt-dlp
+
+# کپی requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # کپی کدها
-COPY app.py .
-COPY uploader.py .
-COPY database.py .
-COPY config.py .
+COPY worker.py .
+COPY api_server.py .
 COPY cookies.txt .
 
-# Environment variables
-ENV PYTHONUNBUFFERED=1
+# ایجاد دایرکتری‌های لازم
+RUN mkdir -p /data /tmp/downloads
 
-# Port
+# Volume برای دیتابیس
+VOLUME /data
+
+# پورت API
 EXPOSE 8000
 
-# اجرا
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "1", "--threads", "2", "--timeout", "0", "app:app"]
-
+# دستور پیش‌فرض
+CMD ["python", "api_server.py"]
