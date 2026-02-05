@@ -45,7 +45,7 @@ def normalize_url(url):
         video_id = url.split('/shorts/')[1].split('?')[0]
         return f'https://www.youtube.com/watch?v={video_id}'
     
-    # YouTube youtu.be (مانند لینکی که فرستادید)
+    # YouTube youtu.be
     if 'youtu.be/' in url:
         video_id = url.split('youtu.be/')[1].split('?')[0]
         return f'https://www.youtube.com/watch?v={video_id}'
@@ -66,7 +66,6 @@ def detect_url_type(url):
     
     if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
         return 'youtube'
-    # تشخیص جامع‌تر برای پورن‌هاب (شامل .org, .net, .com و ساب‌دامین‌ها مثل de.)
     elif 'pornhub' in url_lower:
         return 'pornhub'
     elif 'soundcloud.com' in url_lower:
@@ -98,11 +97,9 @@ async def start_client():
     
     async with _client_lock:
         if client is None:
-            # ساخت client در event loop فعلی
             client = TelegramClient('bot_session', API_ID, API_HASH)
             await client.start(bot_token=BOT_TOKEN)
             print("✅ Telethon client started")
-        
         return client
 
 async def stop_client():
@@ -134,23 +131,17 @@ async def cancel_download(job_id):
     async with cancel_lock:
         if job_id in active_downloads:
             active_downloads[job_id]['cancel'].set()
-            
-            # توقف task
             task = active_downloads[job_id].get('task')
             if task and not task.done():
                 task.cancel()
-            
-            # توقف process
             process = active_downloads[job_id].get('process')
             if process:
                 try:
                     process.kill()
                 except:
                     pass
-            
             print(f"🛑 Download cancelled: {job_id}")
             return True
-        
         return False
 
 async def cleanup_cancel_token(job_id):
@@ -163,7 +154,6 @@ async def cleanup_cancel_token(job_id):
 # Message Helpers
 # ===========================
 async def send_message(chat_id, text):
-    """ارسال پیام"""
     try:
         await start_client()
         await client.send_message(chat_id, text)
@@ -171,7 +161,6 @@ async def send_message(chat_id, text):
         pass
 
 async def edit_message(chat_id, message_id, text):
-    """ویرایش پیام"""
     try:
         await start_client()
         await client.edit_message(chat_id, message_id, text)
@@ -219,7 +208,6 @@ def get_video_info(filepath):
 async def download_with_ytdlp(url, chat_id, message_id, cancel_event, custom_filename=None):
     """
     دانلود با yt-dlp (YouTube, Pornhub, SoundCloud, Deezer)
-    پشتیبانی از نام فایل سفارشی
     """
     url_type = detect_url_type(url)
     
@@ -231,31 +219,26 @@ async def download_with_ytdlp(url, chat_id, message_id, cancel_event, custom_fil
     }
     
     emoji = emoji_map.get(url_type, '📥')
-    
     print(f"{emoji} Downloading from {url_type}: {url}")
-    
-    await edit_message(chat_id, message_id, f"{emoji} شناسایی و آماده‌سازی...")
+    await edit_message(chat_id, message_id, f"{emoji} تلاش برای اتصال و عبور از محدودیت‌ها...")
     
     os.makedirs(DOWNLOAD_PATH, exist_ok=True)
     
     # تنظیم output template
     if custom_filename:
-        # استفاده از نام سفارشی
         output_template = os.path.join(DOWNLOAD_PATH, custom_filename)
     else:
-        # استفاده از عنوان اصلی
         output_template = os.path.join(DOWNLOAD_PATH, '%(title)s.%(ext)s')
     
     # تنظیمات format بر اساس نوع
     if url_type in ['soundcloud', 'deezer']:
-        # فقط صوت
         format_option = 'bestaudio[ext=m4a]/bestaudio/best'
         merge_format = 'm4a'
     else:
-        # ویدیو با بهترین کیفیت
         format_option = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
         merge_format = 'mp4'
     
+    # دستور پایه
     cmd = [
         'yt-dlp',
         '--format', format_option,
@@ -263,11 +246,26 @@ async def download_with_ytdlp(url, chat_id, message_id, cancel_event, custom_fil
         '--output', output_template,
         '--no-playlist',
         '--max-filesize', '2000M',
-        '--concurrent-fragments', '4',  # دانلود سریع‌تر
-        # هدرهای User-Agent برای جلوگیری از بلاک شدن توسط برخی سایت‌ها
-        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        url
+        '--concurrent-fragments', '4',
+        
+        # تنظیمات حیاتی برای جلوگیری از 403
+        '--no-cache-dir',    # جلوگیری از استفاده از کش‌های خراب
+        '--geo-bypass',      # تلاش برای بایپس جغرافیایی
+        '--ignore-errors',   # نادیده گرفتن خطاهای کوچک
+        
+        # شبیه‌سازی مرورگر واقعی
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     ]
+
+    # تنظیمات اختصاصی برای Pornhub
+    if url_type == 'pornhub':
+        cmd.extend([
+            '--add-header', 'Referer:https://www.pornhub.com/',
+            '--add-header', 'Accept-Language:en-US,en;q=0.9',
+            '--socket-timeout', '30'
+        ])
+
+    cmd.append(url)
     
     # اجرای subprocess
     process = await asyncio.create_subprocess_exec(
@@ -298,13 +296,12 @@ async def download_with_ytdlp(url, chat_id, message_id, cancel_event, custom_fil
             
             line = line.decode('utf-8', errors='ignore')
             
-            # پیدا کردن درصد
             if '[download]' in line and '%' in line:
                 try:
                     percent = re.search(r'(\d+\.?\d*)%', line)
                     if percent:
                         now = asyncio.get_event_loop().time()
-                        if now - last_update[0] > 3:  # هر 3 ثانیه
+                        if now - last_update[0] > 4:  # کاهش فرکانس آپدیت برای جلوگیری از فلود
                             await edit_message(
                                 chat_id, message_id,
                                 f"{emoji} در حال دانلود...\n📊 {percent.group(1)}%"
@@ -327,11 +324,10 @@ async def download_with_ytdlp(url, chat_id, message_id, cancel_event, custom_fil
             files.extend(list(Path(DOWNLOAD_PATH).glob(ext)))
         
         if files:
-            # آخرین فایل (جدیدترین)
             latest_file = max(files, key=os.path.getctime)
             return str(latest_file)
         
-        raise Exception("Downloaded file not found")
+        raise Exception("Failed to download file (403 or Not Found)")
         
     except asyncio.CancelledError:
         process.kill()
@@ -344,8 +340,7 @@ async def download_file_fast(url, filename, on_progress, cancel_event):
     os.makedirs(DOWNLOAD_PATH, exist_ok=True)
     filepath = os.path.join(DOWNLOAD_PATH, filename)
     
-    # استفاده از chunk size بزرگ‌تر برای سرعت بیشتر
-    FAST_CHUNK = 5 * 1024 * 1024  # 5MB chunks
+    FAST_CHUNK = 5 * 1024 * 1024
     
     timeout = aiohttp.ClientTimeout(total=None, connect=60, sock_read=300)
     
@@ -358,7 +353,6 @@ async def download_file_fast(url, filename, on_progress, cancel_event):
             
             with open(filepath, 'wb') as f:
                 async for chunk in response.content.iter_chunked(FAST_CHUNK):
-                    # بررسی cancel
                     if cancel_event.is_set():
                         raise Exception("Download cancelled by user")
                     
@@ -375,23 +369,14 @@ async def download_file_fast(url, filename, on_progress, cancel_event):
 # Upload Functions
 # ===========================
 async def upload_to_backup_channel(filepath, file_type='video'):
-    """
-    آپلود فایل به کانال پشتیبان و دریافت file_id
-    """
     if not BACKUP_CHANNEL_ID:
-        print("⚠️ Backup channel not configured")
         return None
-    
     try:
         await start_client()
-        
         filename = os.path.basename(filepath)
         file_size = os.path.getsize(filepath)
-        
         print(f"📤 Uploading to backup channel: {filename}")
-        
         attributes = [DocumentAttributeFilename(filename)]
-        
         if file_type == 'video':
             video_info = get_video_info(filepath)
             if video_info['duration'] > 0:
@@ -401,8 +386,6 @@ async def upload_to_backup_channel(filepath, file_type='video'):
                     h=video_info['height'] or 720,
                     supports_streaming=True
                 ))
-        
-        # آپلود به کانال
         message = await client.send_file(
             BACKUP_CHANNEL_ID,
             filepath,
@@ -410,59 +393,32 @@ async def upload_to_backup_channel(filepath, file_type='video'):
             attributes=attributes,
             force_document=(file_type != 'video')
         )
-        
-        # دریافت file_id (استفاده از message.id)
         if message:
             print(f"✅ Uploaded to backup: message_id={message.id}")
-            return str(message.id)  # استفاده از message ID به عنوان file_id
-        
+            return str(message.id)
     except Exception as e:
         print(f"⚠️ Backup upload failed: {e}")
-    
     return None
 
 async def forward_from_backup(chat_id, file_id, reply_to_message_id=None):
-    """
-    فوروارد فایل از کانال پشتیبان
-    """
     if not BACKUP_CHANNEL_ID:
         return False
-    
     try:
         await start_client()
-        
-        # file_id در اینجا message_id است
         message_id = int(file_id)
-        
-        # فوروارد از کانال پشتیبان
-        await client.forward_messages(
-            chat_id,
-            message_id,
-            BACKUP_CHANNEL_ID
-        )
-        
+        await client.forward_messages(chat_id, message_id, BACKUP_CHANNEL_ID)
         print(f"✅ Forwarded from backup: {file_id}")
         return True
-        
     except Exception as e:
         print(f"⚠️ Forward failed: {e}")
         return False
 
 async def upload_to_telegram(chat_id, filepath, message_id=None, as_video=False):
-    """
-    آپلود فایل به تلگرام
-    as_video=True -> ارسال به صورت ویدیو
-    as_video=False -> ارسال به صورت Document
-    """
     await start_client()
-    
     filename = os.path.basename(filepath)
     file_size = os.path.getsize(filepath)
-    
     print(f"📤 Uploading to user: {filename} (video={as_video})")
-    
     attributes = [DocumentAttributeFilename(filename)]
-    
     if as_video:
         video_info = get_video_info(filepath)
         if video_info['duration'] > 0:
@@ -472,8 +428,6 @@ async def upload_to_telegram(chat_id, filepath, message_id=None, as_video=False)
                 h=video_info['height'] or 720,
                 supports_streaming=True
             ))
-    
-    # آپلود
     await client.send_file(
         chat_id,
         filepath,
@@ -482,14 +436,12 @@ async def upload_to_telegram(chat_id, filepath, message_id=None, as_video=False)
         force_document=(not as_video),
         reply_to=message_id
     )
-    
     print(f"✅ Upload completed")
 
 # ===========================
 # Main Process Job
 # ===========================
 async def process_download_job(job_data):
-    """پردازش job با cache و cancel"""
     job_id = job_data['job_id']
     url_raw = job_data['url']
     chat_id = job_data['chat_id']
@@ -498,39 +450,22 @@ async def process_download_job(job_data):
     file_info = job_data.get('file_info', {})
     
     print(f"🚀 Processing: {job_id}")
-    
-    # پارس کردن نام فایل سفارشی
     custom_filename, url = parse_custom_filename(url_raw)
-    
-    # نرمال‌سازی URL
     url = normalize_url(url)
-    
-    # ساخت cancel token
     cancel_event = await create_cancel_token(job_id)
-    
     filepath = None
     
     try:
         await start_client()
-        
-        # 🔍 بررسی cache
         cached = await file_cache.get(url)
         
-        if cached and not custom_filename:  # اگه نام سفارشی نخواسته، از کش استفاده کن
+        if cached and not custom_filename:
             print(f"💾 Using cached file: {cached['file_id']}")
-            
             await edit_message(
                 chat_id, message_id,
                 f"💾 فایل از قبل دانلود شده!\n📤 در حال ارسال..."
             )
-            
-            # فوروارد از backup channel
-            success = await forward_from_backup(
-                chat_id,
-                cached['file_id'],
-                message_id
-            )
-            
+            success = await forward_from_backup(chat_id, cached['file_id'], message_id)
             if success:
                 await edit_message(
                     chat_id, message_id,
@@ -538,21 +473,16 @@ async def process_download_job(job_data):
                     f"💾 از کش (سریع!)\n\n"
                     f"🎉 می‌تونید فایل جدید بفرستید!"
                 )
-                
                 return {'success': True, 'job_id': job_id, 'from_cache': True}
         
-        # 📥 دانلود جدید
         url_type = detect_url_type(url)
         
         if url_type in ['youtube', 'pornhub', 'soundcloud', 'deezer']:
-            # دانلود با yt-dlp
             filepath = await download_with_ytdlp(url, chat_id, message_id, cancel_event, custom_filename)
             is_video = url_type not in ['soundcloud', 'deezer']
         else:
-            # دانلود مستقیم
             filename = custom_filename or file_info.get('filename', 'downloaded_file')
             total_size = file_info.get('size', 0)
-            
             video_extensions = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.m4v']
             is_video = any(filename.lower().endswith(ext) for ext in video_extensions)
             
@@ -566,14 +496,11 @@ async def process_download_job(job_data):
             
             async def download_progress(downloaded, total, progress):
                 now = asyncio.get_event_loop().time()
-                
-                if now - last_update[1] >= 3:  # هر 3 ثانیه
+                if now - last_update[1] >= 3:
                     speed = (downloaded - last_update[0]) / (now - last_update[1] + 0.001)
                     eta = (total - downloaded) / speed if speed > 0 else 0
-                    
                     last_update[0] = downloaded
                     last_update[1] = now
-                    
                     if message_id:
                         try:
                             await edit_message(
@@ -588,13 +515,11 @@ async def process_download_job(job_data):
             
             filepath = await download_file_fast(url, filename, download_progress, cancel_event)
         
-        # 📤 آپلود به backup channel
         file_id = await upload_to_backup_channel(
             filepath,
             file_type='video' if is_video else 'document'
         )
         
-        # 💾 ذخیره در cache (فقط اگه نام سفارشی نبود)
         if file_id and not custom_filename:
             await file_cache.set(
                 url,
@@ -604,17 +529,14 @@ async def process_download_job(job_data):
                 os.path.getsize(filepath)
             )
         
-        # 📤 آپلود به کاربر
         await upload_to_telegram(chat_id, filepath, message_id, as_video=is_video)
         
-        # 🗑️ حذف فایل
         try:
             os.remove(filepath)
             print(f"🗑️ File deleted: {filepath}")
         except:
             pass
         
-        # ✅ موفقیت
         if message_id:
             await edit_message(
                 chat_id, message_id,
@@ -626,8 +548,6 @@ async def process_download_job(job_data):
         
     except Exception as e:
         print(f"❌ Error: {e}")
-        
-        # حذف فایل در صورت خطا
         if filepath and os.path.exists(filepath):
             try:
                 os.remove(filepath)
@@ -637,6 +557,8 @@ async def process_download_job(job_data):
         error_msg = str(e)
         if 'cancelled' in error_msg.lower():
             error_msg = "دانلود توسط شما لغو شد"
+        elif '403' in error_msg:
+            error_msg = "دسترسی سرور به این لینک محدود شده است (403 Forbidden). احتمالاً آی‌پی سرور بلاک شده."
         
         if message_id:
             try:
@@ -650,5 +572,4 @@ async def process_download_job(job_data):
         return {'success': False, 'job_id': job_id, 'error': str(e)}
     
     finally:
-        # پاک کردن cancel token
         await cleanup_cancel_token(job_id)
