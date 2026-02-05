@@ -2,14 +2,14 @@ import os
 import asyncio
 import threading
 from flask import Flask, request, jsonify
-from uploader_v3 import (
+from uploader import (
     process_download_job, 
     start_client, 
     stop_client,
     cancel_download
 )
 from database import file_cache
-from config_v3 import API_SECRET
+from config import API_SECRET
 
 app = Flask(__name__)
 
@@ -305,3 +305,4 @@ atexit.register(shutdown)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000, debug=False)
+
