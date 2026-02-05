@@ -27,7 +27,7 @@ API_ID = int(os.getenv('API_ID', '0'))
 API_HASH = os.getenv('API_HASH', '')
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 BACKUP_CHANNEL_ID = int(os.getenv('BACKUP_CHANNEL_ID', '0'))
-API_SECRET = os.getenv('KOYEB_API_SECRET', 'your-secret-key')
+API_SECRET = 'mmdw'
 
 DOWNLOAD_PATH = '/tmp/downloads'
 DATABASE_PATH = '/data/cache.db'
@@ -540,7 +540,7 @@ def verify_token(authorization: str = Header(None)):
     
     token = authorization.replace('Bearer ', '')
     if token != API_SECRET:
-        raise HTTPException(status_code=403, detail="Invalid token")
+        raise HTTPException(status_code=403, detail="Invalid token" + API_SECRET)
 
 # Endpoints
 @app.post("/download")
