@@ -5,7 +5,7 @@
 echo "🚀 Starting services..."
 
 # راه‌اندازی API Server در background
-python api_server_fixed.py &
+python api_server.py &
 API_PID=$!
 echo "✅ API Server started (PID: $API_PID)"
 
