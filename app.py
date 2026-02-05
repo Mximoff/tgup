@@ -8,7 +8,7 @@ from uploader import (
     stop_client,
     cancel_download
 )
-from database import file_cache
+from database import file_cache, user_history
 from config import API_SECRET
 
 app = Flask(__name__)
@@ -39,7 +39,7 @@ async def worker():
         try:
             job_data = await job_queue.get()
             
-            if job_data is None:
+            if job_data is None:  # Signal to stop
                 break
             
             user_id = job_data['user_id']
@@ -54,7 +54,7 @@ async def worker():
             # پردازش
             result = await process_download_job(job_data)
             
-            # پاک کردن
+            # پاک کردن (محدودیت برداشته میشه)
             await clear_user_job(user_id)
             
             print(f"✅ Finished: {result}")
@@ -66,83 +66,54 @@ async def worker():
             
             if 'user_id' in locals():
                 await clear_user_job(user_id)
-            
-            job_queue.task_done()
 
-def start_worker():
-    """شروع worker thread"""
+def start_async_loop():
+    """راه‌اندازی event loop در thread جداگانه"""
     global loop
     
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     
-    try:
-        loop.run_until_complete(worker())
-    except Exception as e:
-        print(f"❌ Worker thread error: {e}")
-    finally:
-        loop.close()
+    # شروع worker
+    loop.run_until_complete(worker())
 
-def init_worker():
-    """راه‌اندازی"""
-    global worker_thread
-    
-    worker_thread = threading.Thread(target=start_worker, daemon=True)
-    worker_thread.start()
-    print("✅ Worker thread started")
+# شروع worker thread
+worker_thread = threading.Thread(target=start_async_loop, daemon=True)
+worker_thread.start()
 
-init_worker()
+import time
+time.sleep(2)  # صبر برای آماده شدن
 
-@app.route('/', methods=['GET'])
-def home():
+@app.route('/health', methods=['GET'])
+def health():
     """Health check"""
     return jsonify({
         'status': 'ok',
-        'service': 'Telegram Uploader API v3',
-        'version': '3.0.0',
+        'worker_alive': worker_thread.is_alive() if worker_thread else False,
         'queue_size': job_queue.qsize(),
-        'active_jobs': len(active_jobs),
-        'features': [
-            'YouTube download',
-            'Pornhub download',
-            'SoundCloud download',
-            'Deezer download',
-            'Direct download',
-            'Smart cache system',
-            'Cancel support',
-            'Backup channel',
-            'Video upload'
-        ]
+        'active_jobs': len(active_jobs)
     })
 
 @app.route('/download', methods=['POST'])
 def download():
     """دریافت درخواست دانلود"""
     try:
-        # Authentication
+        # بررسی authentication
         auth_header = request.headers.get('Authorization')
         if not auth_header or auth_header != f'Bearer {API_SECRET}':
             return jsonify({'error': 'Unauthorized'}), 401
         
         data = request.json
         
-        # Validation
-        required = ['job_id', 'url', 'chat_id', 'user_id']
-        for field in required:
+        # بررسی فیلدهای ضروری
+        required_fields = ['job_id', 'url', 'chat_id', 'user_id']
+        for field in required_fields:
             if field not in data:
-                return jsonify({'error': f'Missing: {field}'}), 400
+                return jsonify({'error': f'Missing {field}'}), 400
         
         user_id = data['user_id']
         
         print(f"📨 Request: {data['job_id']} from user {user_id}")
-        
-        # بررسی job فعال
-        if user_id in active_jobs:
-            return jsonify({
-                'error': 'active_download',
-                'message': 'شما یک دانلود فعال دارید',
-                'current_job_id': active_jobs[user_id]
-            }), 409
         
         # افزودن به صف
         future = asyncio.run_coroutine_threadsafe(
@@ -219,6 +190,32 @@ def cancel():
         print(f"❌ Cancel error: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/recent/<int:user_id>', methods=['GET'])
+def get_recent(user_id):
+    """دریافت 5 لینک اخیر کاربر"""
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or auth_header != f'Bearer {API_SECRET}':
+            return jsonify({'error': 'Unauthorized'}), 401
+        
+        # دریافت تاریخچه
+        future = asyncio.run_coroutine_threadsafe(
+            user_history.get_recent(user_id, 5),
+            loop
+        )
+        
+        recent = future.result(timeout=5)
+        
+        return jsonify({
+            'user_id': user_id,
+            'count': len(recent),
+            'recent': recent
+        })
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/status/<int:user_id>', methods=['GET'])
 def check_status(user_id):
     """بررسی وضعیت"""
@@ -256,7 +253,7 @@ def clear_cache():
     if not auth_header or auth_header != f'Bearer {API_SECRET}':
         return jsonify({'error': 'Unauthorized'}), 401
     
-    data = request.json
+    data = request.json or {}
     url = data.get('url')
     
     if url:
@@ -289,7 +286,8 @@ def stats():
         'active_jobs': len(active_jobs),
         'active_users': list(active_jobs.keys()),
         'worker_alive': worker_thread.is_alive() if worker_thread else False,
-        'cache_size': len(file_cache.cache)
+        'cache_size': len(file_cache.cache),
+        'total_users': len(user_history.history)
     })
 
 def shutdown():
@@ -305,4 +303,3 @@ atexit.register(shutdown)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000, debug=False)
-
