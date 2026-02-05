@@ -2,10 +2,13 @@ import os
 import json
 import hashlib
 import asyncio
+import re
 from datetime import datetime
 from pathlib import Path
 
-# مسیر فایل cache
+# ===========================
+# File Cache
+# ===========================
 CACHE_FILE = os.getenv('CACHE_FILE', '/tmp/file_cache.json')
 cache_lock = asyncio.Lock()
 
@@ -22,7 +25,9 @@ class FileCache:
     
     def _url_hash(self, url):
         """تولید hash برای URL"""
-        return hashlib.md5(url.encode()).hexdigest()
+        # نرمال‌سازی URL - حذف query params
+        normalized_url = re.sub(r'\?.*$', '', url)
+        return hashlib.md5(normalized_url.encode()).hexdigest()
     
     def load(self):
         """بارگذاری cache از فایل"""
@@ -41,12 +46,9 @@ class FileCache:
     def save(self):
         """ذخیره cache در فایل"""
         try:
-            # ایجاد دایرکتوری اگه نیست
             os.makedirs(os.path.dirname(CACHE_FILE), exist_ok=True)
-            
             with open(CACHE_FILE, 'w') as f:
                 json.dump(self.cache, f, indent=2)
-            
             print(f"💾 Cache saved: {len(self.cache)} entries")
         except Exception as e:
             print(f"⚠️ Cache save error: {e}")
@@ -59,7 +61,7 @@ class FileCache:
             if url_hash in self.cache:
                 entry = self.cache[url_hash]
                 
-                # بررسی اعتبار (مثلاً 30 روز)
+                # بررسی اعتبار (30 روز)
                 cached_time = datetime.fromisoformat(entry['cached_at'])
                 now = datetime.now()
                 days_old = (now - cached_time).days
@@ -122,3 +124,76 @@ class FileCache:
 
 # نمونه سراسری
 file_cache = FileCache()
+
+# ===========================
+# User History
+# ===========================
+USER_HISTORY_FILE = os.getenv('USER_HISTORY_FILE', '/tmp/user_history.json')
+history_lock = asyncio.Lock()
+
+class UserHistory:
+    """ذخیره تاریخچه کاربران"""
+    
+    def __init__(self):
+        self.history = {}
+        self.load()
+    
+    def load(self):
+        try:
+            if os.path.exists(USER_HISTORY_FILE):
+                with open(USER_HISTORY_FILE, 'r') as f:
+                    self.history = json.load(f)
+                print(f"✅ History loaded: {len(self.history)} users")
+            else:
+                self.history = {}
+        except Exception as e:
+            print(f"⚠️ History load error: {e}")
+            self.history = {}
+    
+    def save(self):
+        try:
+            os.makedirs(os.path.dirname(USER_HISTORY_FILE), exist_ok=True)
+            with open(USER_HISTORY_FILE, 'w') as f:
+                json.dump(self.history, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ History save error: {e}")
+    
+    async def add(self, user_id, url, file_id, file_name, file_size):
+        """اضافه کردن به تاریخچه"""
+        async with history_lock:
+            user_id_str = str(user_id)
+            
+            if user_id_str not in self.history:
+                self.history[user_id_str] = []
+            
+            # اضافه کردن entry جدید
+            self.history[user_id_str].append({
+                'url': url,
+                'file_id': file_id,
+                'file_name': file_name,
+                'file_size': file_size,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+            # نگه‌داشتن فقط 50 آخر
+            if len(self.history[user_id_str]) > 50:
+                self.history[user_id_str] = self.history[user_id_str][-50:]
+            
+            self.save()
+    
+    async def get_recent(self, user_id, limit=5):
+        """دریافت لینک‌های اخیر کاربر"""
+        async with history_lock:
+            user_id_str = str(user_id)
+            
+            if user_id_str not in self.history:
+                return []
+            
+            # جدیدترین‌ها اول
+            recent = self.history[user_id_str][-limit:]
+            recent.reverse()
+            
+            return recent
+
+# نمونه سراسری
+user_history = UserHistory()
