@@ -10,10 +10,8 @@ from telethon.tl.types import DocumentAttributeVideo, DocumentAttributeFilename
 from database import file_cache
 from config import API_ID, API_HASH, BOT_TOKEN, BACKUP_CHANNEL_ID, DOWNLOAD_PATH, CHUNK_SIZE
 
-# Telethon Client
-client = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
-
-_client_started = False
+# Telethon Client - فقط تعریف می‌کنیم، start نمی‌کنیم
+client = None
 _client_lock = asyncio.Lock()
 
 # Cancel management
@@ -90,25 +88,26 @@ def parse_custom_filename(text):
 # Client Management
 # ===========================
 async def start_client():
-    """شروع کلاینت"""
-    global _client_started
+    """شروع کلاینت - ساخت client در event loop صحیح"""
+    global client
     
     async with _client_lock:
-        if not _client_started:
-            await client.connect()
-            _client_started = True
+        if client is None:
+            # ساخت client در event loop فعلی
+            client = TelegramClient('bot_session', API_ID, API_HASH)
+            await client.start(bot_token=BOT_TOKEN)
             print("✅ Telethon client started")
         
         return client
 
 async def stop_client():
     """توقف کلاینت"""
-    global _client_started
+    global client
     
     async with _client_lock:
-        if _client_started:
+        if client is not None:
             await client.disconnect()
-            _client_started = False
+            client = None
             print("⏹️ Telethon client stopped")
 
 # ===========================
