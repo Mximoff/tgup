@@ -45,13 +45,17 @@ def normalize_url(url):
         video_id = url.split('/shorts/')[1].split('?')[0]
         return f'https://www.youtube.com/watch?v={video_id}'
     
-    # YouTube youtu.be
+    # YouTube youtu.be (مانند لینکی که فرستادید)
     if 'youtu.be/' in url:
         video_id = url.split('youtu.be/')[1].split('?')[0]
         return f'https://www.youtube.com/watch?v={video_id}'
     
-    # حذف query params غیرضروری
-    if 'soundcloud.com' in url or 'pornhub' in url:
+    # Pornhub: برای پورن‌هاب نباید کوئری‌ها حذف شوند چون viewkey مهم است
+    if 'pornhub' in url:
+        return url
+    
+    # حذف query params برای سایت‌های دیگر که نیاز ندارند
+    if 'soundcloud.com' in url:
         return url.split('?')[0]
     
     return url
@@ -62,7 +66,8 @@ def detect_url_type(url):
     
     if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
         return 'youtube'
-    elif 'pornhub.com' in url_lower or 'pornhub.net' in url_lower:
+    # تشخیص جامع‌تر برای پورن‌هاب (شامل .org, .net, .com و ساب‌دامین‌ها مثل de.)
+    elif 'pornhub' in url_lower:
         return 'pornhub'
     elif 'soundcloud.com' in url_lower:
         return 'soundcloud'
@@ -259,6 +264,8 @@ async def download_with_ytdlp(url, chat_id, message_id, cancel_event, custom_fil
         '--no-playlist',
         '--max-filesize', '2000M',
         '--concurrent-fragments', '4',  # دانلود سریع‌تر
+        # هدرهای User-Agent برای جلوگیری از بلاک شدن توسط برخی سایت‌ها
+        '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
         url
     ]
     
