@@ -17,15 +17,11 @@ RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /us
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# کپی کدها
-COPY worker.py worker.py
-COPY worker_service.py worker.py
-COPY api_server.py api_server.py
-COPY start.sh start.sh
-COPY cookies.txt cookies.txt
+# کپی فایل backend (فقط یک فایل!)
+COPY backend.py .
 
-# اجازه اجرا به start script
-RUN chmod +x start.sh
+# اگر cookies.txt دارید، کپی کنید (اختیاری)
+COPY cookies.txt .
 
 # ایجاد دایرکتری‌های لازم
 RUN mkdir -p /data /tmp/downloads
@@ -33,8 +29,8 @@ RUN mkdir -p /data /tmp/downloads
 # Volume برای دیتابیس
 VOLUME /data
 
-# پورت‌ها
-EXPOSE 8000 9000
+# پورت
+EXPOSE 8000
 
-# دستور پیش‌فرض - اجرای هر دو سرویس
-CMD ["./start.sh"]
+# اجرای backend
+CMD ["python", "backend.py"]
