@@ -139,29 +139,19 @@ job_counter = 0
 async def queue_download(request: DownloadRequest, authorization: str = Header(None)):
     verify_token(authorization)
     
-    global job_counter
-    job_counter += 1
+    # اینجا به جای اینکه فقط بریزی تو لیست، میگیم پایتون بره تو پس‌زمینه انجامش بده
+    from worker import process_download_job # اگه تو فایل جداست
     
-    job_id = f"job_{job_counter}"
+    job_id = f"job_{os.urandom(4).hex()}"
+    job_data = request.dict()
+    job_data['job_id'] = job_id
     
-    job_data = {
-        'job_id': job_id,
-        'url': request.url,
-        'chat_id': request.chat_id,
-        'user_id': request.user_id,
-        'message_id': request.message_id,
-        'custom_filename': request.custom_filename,
-        'file_info': request.file_info
-    }
-    
-    download_queue.append(job_data)
-    
-    # اینجا باید job رو به worker بفرستی
-    # asyncio.create_task(process_job(job_data))
+    # این خط جادویی کار رو میفرسته برای دانلود بدون اینکه سرور معطل بشه
+    asyncio.create_task(process_download_job(job_data))
     
     return {
         'job_id': job_id,
-        'queue_position': len(download_queue)
+        'queue_position': 1 # چون مستقیم فرستادیم
     }
 
 # ===========================
@@ -174,6 +164,109 @@ async def health_check():
 # ===========================
 # Run Server
 # ===========================
+
+async def process_download_job(job_data):
+    """پردازش job دانلود"""
+    job_id = job_data['job_id']
+    url_raw = job_data['url']
+    chat_id = job_data['chat_id']
+    user_id = job_data['user_id']
+    message_id = job_data.get('message_id')
+    file_info = job_data.get('file_info', {})
+    
+    print(f"🚀 Processing: {job_id}")
+    
+    custom_filename, url = parse_custom_filename(url_raw)
+    url = normalize_url(url)
+    cancel_event = await create_cancel_token(job_id)
+    filepath = None
+    
+    try:
+        await start_client()
+        
+        # چک کش (فقط اگر نام سفارشی نداریم)
+        cached = await get_cached_file(url) if not custom_filename else None
+        
+        if cached:
+            await edit_message(chat_id, message_id, "💾 از کش در حال ارسال...")
+            success = await forward_from_backup(chat_id, cached['file_id'], message_id)
+            
+            if success:
+                await edit_message(chat_id, message_id, "✅ از کش ارسال شد!")
+                await add_to_user_history(user_id, url, cached['filename'], cached['file_size'])
+                return {'success': True, 'job_id': job_id, 'from_cache': True}
+        
+        # دانلود فایل
+        url_type = detect_url_type(url)
+        
+        if url_type in ['youtube', 'pornhub', 'soundcloud', 'deezer']:
+            filepath = await download_with_ytdlp(url, chat_id, message_id, cancel_event, custom_filename)
+            is_video = url_type not in ['soundcloud', 'deezer']
+        else:
+            filename = custom_filename or file_info.get('filename', 'downloaded_file')
+            total_size = file_info.get('size', 0)
+            
+            video_extensions = ['.mp4', '.mkv', '.avi', '.mov', '.webm']
+            is_video = any(filename.lower().endswith(ext) for ext in video_extensions)
+            
+            await edit_message(chat_id, message_id, f"📥 دانلود مستقیم...\n💾 {format_bytes(total_size)}")
+            
+            async def download_progress(downloaded, total, progress):
+                if message_id and total > 0:
+                    try:
+                        await edit_message(chat_id, message_id, f"📥 دانلود: {progress:.1f}%")
+                    except:
+                        pass
+            
+            filepath = await download_file_fast(url, filename, download_progress, cancel_event)
+        
+        # آپلود به کانال پشتیبان
+        file_id = await upload_to_backup_channel(filepath, file_type='video' if is_video else 'document')
+        
+        # ذخیره در کش (فقط اگر نام سفارشی نداریم)
+        if file_id and not custom_filename:
+            await save_to_cache(
+                url, 
+                file_id, 
+                'video' if is_video else 'document',
+                os.path.basename(filepath), 
+                os.path.getsize(filepath)
+            )
+        
+        # ذخیره در تاریخچه کاربر
+        await add_to_user_history(user_id, url, os.path.basename(filepath), os.path.getsize(filepath))
+        
+        # ارسال به کاربر
+        await upload_to_telegram(chat_id, filepath, message_id, as_video=is_video)
+        
+        # پاک کردن فایل موقت
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        
+        if message_id:
+            await edit_message(chat_id, message_id, "✅ ارسال شد!")
+        
+        return {'success': True, 'job_id': job_id, 'from_cache': False}
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        
+        if filepath and os.path.exists(filepath):
+            os.remove(filepath)
+        
+        error_msg = str(e)
+        if 'cookies.txt' in error_msg or '403' in error_msg:
+            error_msg = "❌ خطای 403 - برای PornHub فایل cookies.txt لازمه"
+        
+        if message_id:
+            await send_message(chat_id, f"❌ خطا: {error_msg}")
+        
+        return {'success': False, 'job_id': job_id, 'error': str(e)}
+    
+    finally:
+        await cleanup_cancel_token(job_id)
+
+
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(app, host='0.0.0.0', port=8000)
